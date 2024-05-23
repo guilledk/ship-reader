@@ -558,6 +558,9 @@ export class HyperionSequentialReader {
                                 this.dsPool.exec('processDelta', [deltaDSParams]).then((delta: DeltaDSResponse) => {
                                     this.collectDelta(delta);
                                 }).catch((error) => {
+                                    if (error.message === 'Pool terminated')
+                                        return;
+
                                     this.log('error', 'processDelta call errored out!');
                                     this.log('error', error.message);
                                     this.log('error', error.stack);
@@ -628,6 +631,9 @@ export class HyperionSequentialReader {
                             this.dsPool.exec('processAction', [actionDSParams]).then((action: ActionDSResponse) => {
                                 this.collectAction(action);
                             }).catch((error) => {
+                                if (error.message === 'Pool terminated')
+                                    return;
+
                                 this.log('error', 'process callAction errored out!');
                                 this.log('error', error.message);
                                 this.log('error', error.stack);
