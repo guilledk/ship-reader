@@ -3,7 +3,7 @@ import * as process from "process";
 
 
 import {SharedObjectStore, MemoryBounds} from "shm-store";
-import {ABI, Serializer} from "@greymass/eosio";
+import {ABI, Serializer} from "@wharfkit/antelope";
 import workerpool from "workerpool";
 
 import {logLevelToInt} from "./utils.js";

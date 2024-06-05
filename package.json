@@ -1,7 +1,7 @@
 {
   "name": "@telosnetwork/hyperion-sequential-reader",
   "repository": "telosnetwork/hyperion-sequential-reader",
-  "version": "1.2.7-rc9",
+  "version": "1.2.7-rc10",
   "description": "",
   "main": "./lib/esm/index.js",
   "types": "./lib/esm/index.d.ts",
@@ -16,13 +16,13 @@
   "type": "module",
   "scripts": {
     "build": "yarn && tsc && node scripts/create-dist-packages.mjs",
-    "release": "npm run build && npm pack --pack-destination packages",
+    "release": "yarn build && npm pack --pack-destination packages",
     "test": "node lib/esm/tests/testReaderOrder.js"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@greymass/eosio": "0.7.0",
+    "@wharfkit/antelope": "^1.0.7",
     "async": "^3.2.4",
     "bson": "^6.2.0",
     "bufferutil": "^4.0.8",

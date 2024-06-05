@@ -12,7 +12,7 @@ import {ActionDSMessage, ActionDSResponse, DeltaDSMessage, DeltaDSResponse} from
 import {StateHistorySocket} from "./state-history.js";
 import {OrderedSet} from "./orderedset.js";
 
-import {ABI, ABIDecoder, APIClient, Serializer} from "@greymass/eosio";
+import {ABI, ABIDecoder, APIClient, Serializer} from "@wharfkit/antelope";
 import {SharedObject, SharedObjectStore} from "shm-store";
 import workerpool, {Pool} from "workerpool";
 import {ActionTrace, DecodedBlock} from "./types/antelope.js";

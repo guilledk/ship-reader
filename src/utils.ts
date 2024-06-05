@@ -1,6 +1,6 @@
 export const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
 
-import {ABI} from "@greymass/eosio";
+import {ABI} from "@wharfkit/antelope";
 
 const onblockAbiAction: ABI.Action = {
     name: 'onblock',
