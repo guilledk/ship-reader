@@ -24,6 +24,8 @@ export interface HyperionSequentialReaderOptions {
     chainApi: string;
     poolSize: number;
     irreversibleOnly?: boolean;
+    fetchTraces?: boolean;
+    fetchDeltas?: boolean;
     blockConcurrency?: number;
     blockHistorySize?: number;
     startBlock?: number;
@@ -113,6 +115,8 @@ export class HyperionSequentialReader {
     private lastEmittedBlock: number;
     private nextBlockRequested: number;
     private irreversibleOnly: boolean;
+    private fetchTraces: boolean;
+    private fetchDeltas: boolean;
 
     onConnected: () => void = null;
     onDisconnect: () => void = null;
@@ -145,6 +149,8 @@ export class HyperionSequentialReader {
         });
 
         this.irreversibleOnly = options.irreversibleOnly || false
+        this.fetchDeltas = options.fetchDeltas || true;
+        this.fetchTraces = options.fetchTraces || true;
 
         this.startBlock = options.startBlock || -1;
         this.lastEmittedBlock = this.startBlock - 1;
@@ -415,8 +421,8 @@ export class HyperionSequentialReader {
             have_positions: [],
             irreversible_only: this.irreversibleOnly,
             fetch_block: true,
-            fetch_traces: true,
-            fetch_deltas: true,
+            fetch_traces: this.fetchTraces,
+            fetch_deltas: this.fetchDeltas,
         }]);
     }
 
