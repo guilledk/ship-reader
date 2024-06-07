@@ -14,6 +14,9 @@ const options = {
     outputQueueLimit: 8000,
     startBlock: 180698860,
     endBlock: -1,
+    fetchBlock: false,
+    fetchTraces: false,
+    fetchDeltas: false,
     actionWhitelist: {
         'eosio.token': ['transfer'],
         'eosio.evm': ['raw', 'withdraw']

@@ -24,6 +24,7 @@ export interface HyperionSequentialReaderOptions {
     chainApi: string;
     poolSize: number;
     irreversibleOnly?: boolean;
+    fetchBlock?: boolean;
     fetchTraces?: boolean;
     fetchDeltas?: boolean;
     blockConcurrency?: number;
@@ -115,6 +116,8 @@ export class HyperionSequentialReader {
     private lastEmittedBlock: number;
     private nextBlockRequested: number;
     private irreversibleOnly: boolean;
+
+    private fetchBlock: boolean;
     private fetchTraces: boolean;
     private fetchDeltas: boolean;
 
@@ -126,13 +129,13 @@ export class HyperionSequentialReader {
 
     constructor(private options: HyperionSequentialReaderOptions) {
 
-        this.logLevel = options.logLevel || 'warning';
+        this.logLevel = options.logLevel ?? 'warning';
         this.shipApi = options.shipApi;
-        this.max_payload_mb = options.maxPayloadMb || 256;
-        this.maxMsgsInFlight = options.maxMsgsInFlight || 100;
+        this.max_payload_mb = options.maxPayloadMb ?? 256;
+        this.maxMsgsInFlight = options.maxMsgsInFlight ?? 100;
         this.ship = new StateHistorySocket(this.shipApi, this.max_payload_mb);
 
-        this.blockHistorySize = options.blockHistorySize || HIST_TIME;
+        this.blockHistorySize = options.blockHistorySize ?? HIST_TIME;
         this.blockHistory = new OrderedSet<number>(this.blockHistorySize);
 
         // placeholder store
@@ -144,23 +147,24 @@ export class HyperionSequentialReader {
         });
 
         this.createWorkers({
-            poolSize: options.poolSize || 1,
-            logLevel: options.workerLogLevel || 'warning'
+            poolSize: options.poolSize ?? 1,
+            logLevel: options.workerLogLevel ?? 'warning'
         });
 
-        this.irreversibleOnly = options.irreversibleOnly || false
-        this.fetchDeltas = options.fetchDeltas || true;
-        this.fetchTraces = options.fetchTraces || true;
+        this.irreversibleOnly = options.irreversibleOnly ?? false
+        this.fetchBlock = options.fetchBlock ?? true;
+        this.fetchDeltas = options.fetchDeltas ?? true;
+        this.fetchTraces = options.fetchTraces ?? true;
 
-        this.startBlock = options.startBlock || -1;
+        this.startBlock = options.startBlock ?? -1;
         this.lastEmittedBlock = this.startBlock - 1;
         this.nextBlockRequested = this.startBlock;
-        this.endBlock = options.endBlock || -1;
+        this.endBlock = options.endBlock ?? -1;
 
         if (!options.endBlock && !options.startBlock) {
             this.blockConcurrency = 1;
         } else {
-            this.blockConcurrency = options.blockConcurrency || 5;
+            this.blockConcurrency = options.blockConcurrency ?? 5;
         }
 
         if (options.inputQueueLimit) {
@@ -420,7 +424,7 @@ export class HyperionSequentialReader {
             max_messages_in_flight: this.maxMsgsInFlight,
             have_positions: [],
             irreversible_only: this.irreversibleOnly,
-            fetch_block: true,
+            fetch_block: this.fetchBlock,
             fetch_traces: this.fetchTraces,
             fetch_deltas: this.fetchDeltas,
         }]);
@@ -475,6 +479,10 @@ export class HyperionSequentialReader {
 
         this.blockHistory.add(blockNum);
 
+        const extendedActions = [];
+        const extendedDeltas = [];
+        let blockHeader = null;
+
         if (resultElement.block && blockNum) {
 
             const block = Serializer.decode({
@@ -483,7 +491,7 @@ export class HyperionSequentialReader {
                 abi: this.shipAbi
             }) as any;
 
-            const blockHeader = Serializer.objectify({
+            blockHeader = Serializer.objectify({
                 timestamp: block.timestamp,
                 producer: block.producer,
                 confirmed: block.confirmed,
@@ -497,7 +505,6 @@ export class HyperionSequentialReader {
                 block_extensions: block.block_extensions,
             });
 
-            const extendedDeltas = [];
             if (resultElement.deltas) {
                 const deltaArrays = Serializer.decode({
                     type: 'table_delta[]',
@@ -578,7 +585,6 @@ export class HyperionSequentialReader {
                 }
             }
 
-            const extendedActions = [];
             if (resultElement.traces) {
                 const traces = Serializer.decode({
                     type: 'transaction_trace[]',
@@ -601,7 +607,7 @@ export class HyperionSequentialReader {
                             this.log('warning', `action trace with receipt null! maybe hard_fail'ed deferred tx? block: ${blockNum}`);
                             continue;
                         }
-                        if (this.isActionRelevant(actionTrace.act.account, actionTrace.act.name))  {
+                        if (this.isActionRelevant(actionTrace.act.account, actionTrace.act.name)) {
                             const abiActionNames = [];
                             this.contracts.get(actionTrace.act.account).actions.forEach((obj) => {
                                 abiActionNames.push(obj.name.toString());
@@ -649,29 +655,29 @@ export class HyperionSequentialReader {
                     }
                 }
             }
-
-            const nBlock = {
-                ready: false,
-                blockInfo,
-                blockHeader,
-                counters: {
-                    actions: 0,
-                    deltas: 0
-                },
-                targets: {
-                    actions: extendedActions.length,
-                    deltas: extendedDeltas.length,
-                },
-                deltas: extendedDeltas,
-                actions: extendedActions,
-                createdAt: process.hrtime.bigint()
-            };
-
-            this.blockCollector.set(blockNum, nBlock);
-
-            if (extendedDeltas.length == 0 && extendedActions.length == 0)
-                this.checkBlock(nBlock);
         }
+
+        const nBlock = {
+            ready: false,
+            blockInfo,
+            blockHeader,
+            counters: {
+                actions: 0,
+                deltas: 0
+            },
+            targets: {
+                actions: extendedActions.length,
+                deltas: extendedDeltas.length,
+            },
+            deltas: extendedDeltas,
+            actions: extendedActions,
+            createdAt: process.hrtime.bigint()
+        };
+
+        this.blockCollector.set(blockNum, nBlock);
+
+        if (extendedDeltas.length == 0 && extendedActions.length == 0)
+            this.checkBlock(nBlock);
     }
 
     createWorkers(param: { poolSize: number, logLevel: string }) {
