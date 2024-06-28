@@ -288,28 +288,32 @@ export class HyperionSequentialReader {
         this.log('info', `Connecting to ${this.shipApi}...`);
         this.connecting = true;
 
-        this.ship.connect(
-            (data: RawData) => {
-                this.handleShipMessage(data as Buffer).catch((e) => this.log('error', e));
-            },
-            () => {
-                this.connecting = false;
-                this.shipAbiReady = false;
-                if (this.onDisconnect)
-                    this.onDisconnect();
-            },
-            (err) => {
-                this.connecting = false;
-                this.shipAbiReady = false;
-                if (this.onError)
-                    this.onError(err);
-            },
-            () => {
-                this.connecting = false;
-                if (this.onConnected)
-                    this.onConnected();
-            }
-        );
+        await new Promise<void>((resolve, reject) => {
+            this.ship.connect(
+                (data: RawData) => {
+                    this.handleShipMessage(data as Buffer).catch((e) => this.log('error', e));
+                },
+                () => {
+                    this.connecting = false;
+                    this.shipAbiReady = false;
+                    if (this.onDisconnect)
+                        this.onDisconnect();
+                },
+                (err) => {
+                    this.connecting = false;
+                    this.shipAbiReady = false;
+                    if (this.onError)
+                        this.onError(err);
+                    reject();
+                },
+                () => {
+                    this.connecting = false;
+                    if (this.onConnected)
+                        this.onConnected();
+                    resolve();
+                }
+            );
+        });
     }
 
    async stop() {
