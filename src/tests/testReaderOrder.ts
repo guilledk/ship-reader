@@ -1,19 +1,14 @@
-import {HyperionSequentialReader} from "../reader.js";
-import {ABI} from "@greymass/eosio";
+import {StateHistoryReader, StateHistoryReaderOptions} from "../reader.js";
+import {ABI} from "@wharfkit/antelope";
 import {readFileSync} from "node:fs";
 import {expect} from 'chai';
-import {BSON} from "bson";
 import * as console from "console";
 
-const options = {
-    shipApi: 'ws://127.0.0.1:11352',
-    chainApi: 'http://127.0.0.1:58294',
-    poolSize: 16,
-    blockConcurrency: 16,
+const options: StateHistoryReaderOptions = {
+    shipApi: 'ws://127.0.0.1:29999',
+    chainApi: 'http://127.0.0.1:8888',
     blockHistorySize: 1000,
-    inputQueueLimit: 8000,
-    outputQueueLimit: 8000,
-    startBlock: 320206990,
+    startBlock: 180698861,
     endBlock: -1,
     actionWhitelist: {
         'eosio.token': ['transfer'],
@@ -21,11 +16,10 @@ const options = {
     },
     tableWhitelist: {},
     logLevel: 'info',
-    // workerLogLevel: 'debug',
     maxPayloadMb: Math.floor(1024 * 1.5)
 };
 
-const reader = new HyperionSequentialReader(options);
+const reader = new StateHistoryReader(options);
 reader.onError = (err) => {throw err};
 
 const abis = ['eosio', 'telos.evm', 'eosio.token'].map((abiFileNames) => {
@@ -49,7 +43,7 @@ const statsTask = setInterval(() => {
     }
 }, 1000);
 
-reader.events.on('block', async (block) => {
+reader.onBlock = (block) => {
     const currentBlock = block.blockInfo.this_block.block_num;
 
     if (firstBlock < 0) {
@@ -61,8 +55,8 @@ reader.events.on('block', async (block) => {
     lastPushed = block.blockInfo.this_block.block_num;
     lastPushedTS = block.blockHeader.timestamp;
     totalRead++;
-    reader.ack();
-});
+    reader.ack(1);
+};
 
 reader.events.on('stop', () => {
     const elapsedMs = performance.now() - firstBlockTs;
@@ -79,4 +73,4 @@ reader.events.on('stop', () => {
     clearInterval(statsTask);
 });
 
-await reader.start();
+reader.start();
