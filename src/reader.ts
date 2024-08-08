@@ -1,4 +1,4 @@
-import WebSocket from "ws";
+import WebSocket, {RawData} from "ws";
 import {EventEmitter} from "events";
 import fetch from "node-fetch";
 import * as process from "process";
@@ -8,44 +8,55 @@ import {addOnBlockToABI, logLevelToInt, ThroughputMeasurer} from "./utils.js";
 
 import {ABI, ABIDecoder, APIClient, Serializer} from "@wharfkit/antelope";
 
+import { z } from 'zod';
 
-export interface StateHistoryReaderOptions {
-    shipApi: string;
-    chainApi: string;
-    irreversibleOnly?: boolean;
-    blockHistorySize?: number;
-    startBlock?: number;
-    endBlock?: number;
-    logLevel?: string;
-    maxPayloadMb?: number;
-    maxMsgsInFlight?: number;
-    fetchBlock?: boolean;
-    fetchTraces?: boolean;
-    fetchDeltas?: boolean;
-    actionWhitelist?: {[key: string]: string[]};  // key is code name, value is list of actions
-    tableWhitelist?: {[key: string]: string[]};   // key is code name, value is list of tables,
-    speedMeasureConf?: {
-        windowSizeMs: number;
-        deltaMs: number;
-    };
-}
+export const StateHistoryReaderOptionsSchema = z.object({
+    shipAPI: z.string(),
+    chainAPI: z.string(),
+    irreversibleOnly: z.boolean().optional().default(false),
+    blockHistorySize: z.number().optional(),
+    startBlock: z.number().optional().default(-1),
+    stopBlock: z.number().optional().default(-1),
+    logLevel: z.string().optional().default('warning'),
+    maxPayloadMb: z.number().optional().default(256),
+    maxMsgsInFlight: z.number().optional().default(1000),
+    fetchBlock: z.boolean().optional().default(true),
+    fetchTraces: z.boolean().optional().default(true),
+    fetchDeltas: z.boolean().optional().default(true),
+    actionWhitelist: z.record(z.string(), z.array(z.string())).optional(),
+    tableWhitelist: z.record(z.string(), z.array(z.string())).optional(),
+    speedMeasureConf: z.object({
+        windowSizeMs: z.number().optional().default(10000),
+        deltaMs: z.number().optional().default(1000),
+    }).optional(),
+}).transform((options) => ({
+    ...options,
+    actionWhitelist: options.actionWhitelist
+        ? new Map(Object.entries(options.actionWhitelist))
+        : new Map(),
+    tableWhitelist: options.tableWhitelist
+        ? new Map(Object.entries(options.tableWhitelist))
+        : new Map(),
+}));
+
+type StateHistoryReaderOptions = z.infer<typeof StateHistoryReaderOptionsSchema>;
 
 export class StateHistoryReader {
-    ws;
-    maxPayloadMb: number;
-    maxMsgsInFlight: number;
+
+    readonly options: StateHistoryReaderOptions;
+
+    ws: WebSocket;
     reconnectCount = 0;
     private connecting = false;
     private shipAbi?: ABI;
     private shipAbiReady = false;
-    events = new EventEmitter();
+    readonly events = new EventEmitter();
 
     private contracts: Map<string, ABI> = new Map();
-    private actionWhitelist: Map<string, string[]>;
-    private tableWhitelist: Map<string, string[]>;
 
     startBlock: number;
-    endBlock: number;
+    stopBlock: number;
+    lastEmittedBlock: number;
 
     perfMetrics: ThroughputMeasurer;
     readonly speedMeasureWindowSize: number;
@@ -54,15 +65,7 @@ export class StateHistoryReader {
     private blocksSinceLastMeasure: number = 0;
     private _perfMetricTask;
 
-    logLevel: string;
-
     api: APIClient;
-    shipApi: string;
-    private lastEmittedBlock: number;
-    private irreversibleOnly: boolean;
-    private fetchBlock: boolean;
-    private fetchTraces: boolean;
-    private fetchDeltas: boolean;
 
     onConnected: () => void = null;
     onDisconnect: () => void = null;
@@ -70,32 +73,16 @@ export class StateHistoryReader {
 
     onBlock: (block) => void = null;
 
-    constructor(private options: StateHistoryReaderOptions) {
-        this.shipApi = options.shipApi;
-
-        this.logLevel = options.logLevel ?? 'warning';
-        this.maxPayloadMb = options.maxPayloadMb ?? 256;
-        this.maxMsgsInFlight = options.maxMsgsInFlight ?? 1000;
+    constructor(options: StateHistoryReaderOptions) {
+        this.options = options;
 
         this.api = new APIClient({
-            url: options.chainApi,
+            url: options.chainAPI,
             fetch
         });
 
-        this.irreversibleOnly = options.irreversibleOnly ?? false;
-        this.fetchBlock = options.fetchBlock ?? true;
-        this.fetchDeltas = options.fetchDeltas ?? true;
-        this.fetchTraces = options.fetchTraces ?? true;
-
         this.startBlock = options.startBlock ?? -1;
         this.lastEmittedBlock = this.startBlock - 1;
-        this.endBlock = options.endBlock ?? -1;
-
-        if (options.actionWhitelist)
-            this.actionWhitelist = new Map(Object.entries(options.actionWhitelist));
-
-        if (options.tableWhitelist)
-            this.tableWhitelist = new Map(Object.entries(options.tableWhitelist));
 
         this.speedMeasureDeltaMs = 1000;
         this.speedMeasureWindowSize = 10 * 1000;
@@ -116,9 +103,9 @@ export class StateHistoryReader {
     isActionRelevant(account: string, name: string): boolean {
         return (
             this.contracts.has(account) && (
-                !this.actionWhitelist ||
-                (this.actionWhitelist.has(account) &&
-                 this.actionWhitelist.get(account).includes(name))
+                !this.options.actionWhitelist ||
+                (this.options.actionWhitelist.has(account) &&
+                 this.options.actionWhitelist.get(account).includes(name))
             )
         );
     }
@@ -126,15 +113,15 @@ export class StateHistoryReader {
     isDeltaRelevant(code: string, table: string): boolean {
         return (
             this.contracts.has(code) && (
-                !this.tableWhitelist ||
-                (this.tableWhitelist.has(code) &&
-                 this.tableWhitelist.get(code).includes(table))
+                !this.options.tableWhitelist ||
+                (this.options.tableWhitelist.has(code) &&
+                 this.options.tableWhitelist.get(code).includes(table))
             )
         );
     }
 
     log(level: string, message?: any, ...optionalParams: any[]): void {
-        if (logLevelToInt(this.logLevel) >= logLevelToInt(level))
+        if (logLevelToInt(this.options.logLevel) >= logLevelToInt(level))
             console.log(`[${(new Date()).toISOString().slice(0, -1)}][READER][${level.toUpperCase()}]`, message, ...optionalParams);
     }
 
@@ -143,20 +130,20 @@ export class StateHistoryReader {
             throw new Error('Reader already connecting');
 
         this.log('info', 'Node range check done!');
-        this.log('info', `Connecting to ${this.shipApi}...`);
+        this.log('info', `Connecting to ${this.options.shipAPI}...`);
         this.connecting = true;
 
-        this.ws = new WebSocket(this.shipApi, {
+        this.ws = new WebSocket(this.options.shipAPI, {
             perMessageDeflate: false,
-            maxPayload: this.maxPayloadMb * 1024 * 1024,
+            maxPayload: this.options.maxPayloadMb * 1024 * 1024,
         });
         this.ws.on('open', () => {
             this.connecting = false;
             if (this.onConnected)
                 this.onConnected();
         });
-        this.ws.on('message', (msg) => {
-            this.handleShipMessage(msg);
+        this.ws.on('message', (msg: RawData) => {
+            this.handleShipMessage(msg as Buffer);
         });
         this.ws.on('close', () => {
             this.connecting = false;
@@ -225,17 +212,17 @@ export class StateHistoryReader {
                 const beginShipState = data.chain_state_begin_block;
                 const endShipState = data.chain_state_end_block;
                 if (this.startBlock < 0) {
-                    this.startBlock = (this.irreversibleOnly ? data.last_irreversible.block_num : data.head.block_num) + this.startBlock;
+                    this.startBlock = (this.options.irreversibleOnly ? data.last_irreversible.block_num : data.head.block_num) + this.startBlock;
                 } else {
-                    if (this.irreversibleOnly && this.startBlock > data.last_irreversible.block_num)
+                    if (this.options.irreversibleOnly && this.startBlock > data.last_irreversible.block_num)
                         throw new Error(`irreversibleOnly true but startBlock > ship LIB`);
                 }
                 // only care about end state if end block < 0 or end block is max posible
-                if (this.endBlock != 0xffffffff - 1)
-                    if (this.endBlock < 0)
-                        this.endBlock = 0xffffffff - 1;
-                    else if (this.endBlock > endShipState)
-                        throw new Error(`End block ${this.endBlock} not in chain_state, end state: ${endShipState}`);
+                if (this.options.stopBlock != 0xffffffff - 1)
+                    if (this.stopBlock < 0)
+                        this.stopBlock = 0xffffffff - 1;
+                    else if (this.stopBlock > endShipState)
+                        throw new Error(`End block ${this.stopBlock} not in chain_state, end state: ${endShipState}`);
 
                 if (this.startBlock <= beginShipState)
                     throw new Error(`Start block ${this.startBlock} not in chain_state, begin state: ${beginShipState} (must be +1 to startBlock)`);
@@ -243,7 +230,7 @@ export class StateHistoryReader {
                 this.lastEmittedBlock = this.startBlock - 1;
                 this.requestBlocks({
                     from: this.startBlock,
-                    to: this.endBlock
+                    to: this.stopBlock
                 });
                 break;
             }
@@ -264,12 +251,12 @@ export class StateHistoryReader {
         this.send(['get_blocks_request_v0', {
             start_block_num: param.from > 0 ? param.from : -1,
             end_block_num: param.to > 0 ? param.to + 1 : 0xffffffff,
-            max_messages_in_flight: this.maxMsgsInFlight,
+            max_messages_in_flight: this.options.maxMsgsInFlight,
             have_positions: [],
-            irreversible_only: this.irreversibleOnly,
-            fetch_block: this.fetchBlock,
-            fetch_traces: this.fetchTraces,
-            fetch_deltas: this.fetchDeltas,
+            irreversible_only: this.options.irreversibleOnly,
+            fetch_block: this.options.fetchBlock,
+            fetch_traces: this.options.fetchTraces,
+            fetch_deltas: this.options.fetchDeltas,
         }]);
     }
 

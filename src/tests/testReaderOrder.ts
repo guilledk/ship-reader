@@ -1,12 +1,12 @@
-import {StateHistoryReader, StateHistoryReaderOptions} from "../reader.js";
+import {StateHistoryReader, StateHistoryReaderOptionsSchema} from "../reader.js";
 import {ABI} from "@wharfkit/antelope";
 import {readFileSync} from "node:fs";
 import {expect} from 'chai';
 import * as console from "console";
 
-const options: StateHistoryReaderOptions = {
-    shipApi: 'ws://127.0.0.1:29999',
-    chainApi: 'http://127.0.0.1:8888',
+const options = StateHistoryReaderOptionsSchema.parse({
+    shipAPI: 'ws://127.0.0.1:29999',
+    chainAPI: 'http://127.0.0.1:8888',
     blockHistorySize: 1000,
     startBlock: 180698861,
     endBlock: -1,
@@ -17,7 +17,7 @@ const options: StateHistoryReaderOptions = {
     tableWhitelist: {},
     logLevel: 'info',
     maxPayloadMb: Math.floor(1024 * 1.5)
-};
+});
 
 const reader = new StateHistoryReader(options);
 reader.onError = (err) => {throw err};
@@ -67,8 +67,8 @@ reader.events.on('stop', () => {
     if (options.startBlock > 0)
         expect(firstBlock, 'First block received mismatch!').to.be.equal(options.startBlock);
 
-    if (options.endBlock > 0)
-        expect(lastPushed, 'Last block received mismatch!').to.be.equal(options.endBlock);
+    if (options.stopBlock > 0)
+        expect(lastPushed, 'Last block received mismatch!').to.be.equal(options.stopBlock);
 
     clearInterval(statsTask);
 });
