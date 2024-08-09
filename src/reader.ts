@@ -1,45 +1,12 @@
 import WebSocket, {RawData} from "ws";
 import {EventEmitter} from "events";
 import fetch from "node-fetch";
-import * as process from "process";
 import * as console from "console";
 
+import {ActionSchema, Block, BlockSchema, DeltaSchema, StateHistoryReaderOptions} from "./types.js";
 import {addOnBlockToABI, logLevelToInt, ThroughputMeasurer} from "./utils.js";
 
 import {ABI, ABIDecoder, APIClient, Serializer} from "@wharfkit/antelope";
-
-import { z } from 'zod';
-
-export const StateHistoryReaderOptionsSchema = z.object({
-    shipAPI: z.string(),
-    chainAPI: z.string(),
-    irreversibleOnly: z.boolean().optional().default(false),
-    blockHistorySize: z.number().optional(),
-    startBlock: z.number().optional().default(-1),
-    stopBlock: z.number().optional().default(-1),
-    logLevel: z.string().optional().default('warning'),
-    maxPayloadMb: z.number().optional().default(256),
-    maxMsgsInFlight: z.number().optional().default(1000),
-    fetchBlock: z.boolean().optional().default(true),
-    fetchTraces: z.boolean().optional().default(true),
-    fetchDeltas: z.boolean().optional().default(true),
-    actionWhitelist: z.record(z.string(), z.array(z.string())).optional(),
-    tableWhitelist: z.record(z.string(), z.array(z.string())).optional(),
-    speedMeasureConf: z.object({
-        windowSizeMs: z.number().optional().default(10000),
-        deltaMs: z.number().optional().default(1000),
-    }).optional(),
-}).transform((options) => ({
-    ...options,
-    actionWhitelist: options.actionWhitelist
-        ? new Map(Object.entries(options.actionWhitelist))
-        : new Map(),
-    tableWhitelist: options.tableWhitelist
-        ? new Map(Object.entries(options.tableWhitelist))
-        : new Map(),
-}));
-
-type StateHistoryReaderOptions = z.infer<typeof StateHistoryReaderOptionsSchema>;
 
 export class StateHistoryReader {
 
@@ -71,7 +38,7 @@ export class StateHistoryReader {
     onDisconnect: () => void = null;
     onError: (err) => void = null;
 
-    onBlock: (block) => void = null;
+    onBlock: (block: Block) => void = null;
 
     constructor(options: StateHistoryReaderOptions) {
         this.options = options;
@@ -343,7 +310,6 @@ export class StateHistoryReader {
                         });
                     }
 
-
                     if (deltaArray[1].name === 'contract_row') {
                         deltaArray[1].rows.forEach((row: any, index: number) => {
                             const deltaRow = Serializer.decode({
@@ -353,17 +319,18 @@ export class StateHistoryReader {
                             })[1];
                             const deltaObj = Serializer.objectify(deltaRow);
                             if (this.isDeltaRelevant(deltaObj.code, deltaObj.table)) {
-                                const extDelta = {
-                                    present: row.present,
-                                    ...deltaObj
-                                };
-                                const abi = this.contracts.get(deltaObj.table);
+                                const abi = this.contracts.get(deltaObj.code);
                                 const type = abi.tables.find(value => value.name === deltaObj.table)?.type;
                                 const dsValue = Serializer.decode({
                                     data: deltaObj.value,
                                     type, abi
                                 });
-                                decodedDeltas.push(Serializer.objectify(dsValue));
+                                const delta = Serializer.objectify(dsValue);
+                                decodedDeltas.push(DeltaSchema.parse({
+                                    code: deltaObj.code,
+                                    table: deltaObj.table,
+                                    delta
+                                }));
                             }
                         });
                     }
@@ -404,10 +371,20 @@ export class StateHistoryReader {
                                 continue;
                             }
                             const gs = actionTrace.receipt[1].global_sequence;
+                            const action = actionTrace.act;
+                            const abi = this.contracts.get(action.account);
+                            const decodedActData = Serializer.decode({
+                                data: action.data,
+                                type: action.name,
+                                ignoreInvalidUTF8: true,
+                                abi
+                            });
+                            actionTrace.act.data = Serializer.objectify(decodedActData);
                             const extAction = {
-                                actionOrdinal: actionTrace.action_ordinal,
-                                creatorActionOrdinal: actionTrace.creator_action_ordinal,
-                                trxId: rt.id,
+                                global_sequence: gs,
+                                action_ordinal: actionTrace.action_ordinal,
+                                creator_action_ordinal: actionTrace.creator_action_ordinal,
+                                trx_id: rt.id,
                                 cpu: rt.cpu_usage_us,
                                 net: rt.net_usage_words,
                                 ram: actionTrace.account_ram_deltas,
@@ -417,15 +394,7 @@ export class StateHistoryReader {
                                 signatures: partialTransaction.signatures,
                                 act: actionTrace.act
                             };
-                            const action = actionTrace.act;
-                            const abi = this.contracts.get(action.account);
-                            const decodedActData = Serializer.decode({
-                                data: action.data,
-                                type: action.name,
-                                ignoreInvalidUTF8: true,
-                                abi
-                            });
-                            decodedActions.push(Serializer.objectify(decodedActData));
+                            decodedActions.push(ActionSchema.parse(extAction));
                         }
                     }
                 }
@@ -433,13 +402,12 @@ export class StateHistoryReader {
         }
 
         if (this.onBlock) {
-            this.onBlock({
-                blockInfo,
-                blockHeader,
+            this.onBlock(BlockSchema.parse({
+                status: blockInfo,
+                header: blockHeader,
                 deltas: decodedDeltas,
-                actions: decodedActions,
-                createdAt: process.hrtime.bigint()
-            });
+                actions: decodedActions
+            }));
         }
 
         this.blocksSinceLastMeasure++;

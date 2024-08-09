@@ -1,8 +1,9 @@
-import {StateHistoryReader, StateHistoryReaderOptionsSchema} from "../reader.js";
+import {StateHistoryReader} from "../reader.js";
 import {ABI} from "@wharfkit/antelope";
 import {readFileSync} from "node:fs";
 import {expect} from 'chai';
 import * as console from "console";
+import {Block, StateHistoryReaderOptionsSchema} from "../types.js";
 
 const options = StateHistoryReaderOptionsSchema.parse({
     shipAPI: 'ws://127.0.0.1:29999',
@@ -14,7 +15,9 @@ const options = StateHistoryReaderOptionsSchema.parse({
         'eosio.token': ['transfer'],
         'eosio.evm': ['raw', 'withdraw']
     },
-    tableWhitelist: {},
+    tableWhitelist: {
+        'eosio.evm': ['config', 'account', 'accountstate']
+    },
     logLevel: 'info',
     maxPayloadMb: Math.floor(1024 * 1.5)
 });
@@ -22,7 +25,7 @@ const options = StateHistoryReaderOptionsSchema.parse({
 const reader = new StateHistoryReader(options);
 reader.onError = (err) => {throw err};
 
-const abis = ['eosio', 'telos.evm', 'eosio.token'].map((abiFileNames) => {
+const abis = ['eosio', 'eosio.evm', 'eosio.token'].map((abiFileNames) => {
     const jsonAbi = JSON.parse(readFileSync(`./${abiFileNames}.abi`).toString())
     return {account: jsonAbi.account_name, abi: ABI.from(jsonAbi.abi)};
 });
@@ -43,8 +46,8 @@ const statsTask = setInterval(() => {
     }
 }, 1000);
 
-reader.onBlock = (block) => {
-    const currentBlock = block.blockInfo.this_block.block_num;
+reader.onBlock = (block: Block) => {
+    const currentBlock = block.status.this_block.block_num;
 
     if (firstBlock < 0) {
         firstBlock = currentBlock;
@@ -52,8 +55,8 @@ reader.onBlock = (block) => {
     }
 
     expect(currentBlock).to.be.equal(lastPushed + 1);
-    lastPushed = block.blockInfo.this_block.block_num;
-    lastPushedTS = block.blockHeader.timestamp;
+    lastPushed = block.status.this_block.block_num;
+    lastPushedTS = block.header.timestamp;
     totalRead++;
     reader.ack(1);
 };
