@@ -1,7 +1,7 @@
 {
-  "name": "@eosrio/hyperion-sequential-reader",
-  "repository": "eosrio/hyperion-sequential-reader",
-  "version": "1.2.6",
+  "name": "@guilledk/state-history-reader",
+  "repository": "guilledk/ship-reader",
+  "version": "0.1.0",
   "description": "",
   "main": "./lib/esm/index.js",
   "types": "./lib/esm/index.d.ts",
@@ -15,23 +15,19 @@
   },
   "type": "module",
   "scripts": {
-    "build": "yarn && tsc && node scripts/create-dist-packages.mjs",
-    "release": "npm run build && npm pack --pack-destination packages",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "yarn && tsc && node scripts/create-dist-packages.mjs"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@greymass/eosio": "0.7.0",
-    "async": "^3.2.4",
-    "bson": "^6.2.0",
+    "@wharfkit/antelope": "^1.0.10",
     "bufferutil": "^4.0.8",
     "node-fetch": "^3.3.0",
-    "shm-store": "^1.0.0-rc1",
-    "workerpool": "^9.0.4",
-    "ws": "^8.13.0"
+    "ws": "^8.13.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
+    "testcontainers": "^10.11.0",
     "@types/chai": "^4.3.11",
     "@types/node": "^18.11.13",
     "@types/ws": "^8.5.4",

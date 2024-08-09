@@ -1,6 +1,4 @@
-export const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
-
-import {ABI} from "@greymass/eosio";
+import {ABI} from "@wharfkit/antelope";
 
 const onblockAbiAction: ABI.Action = {
     name: 'onblock',
@@ -29,34 +27,6 @@ export function logLevelToInt(level: string) {
         throw new Error(`Unimplemented level ${level}`);
     return levels.indexOf(level);
 }
-
-function isObject(item) {
-    return (item && typeof item === 'object' && !Array.isArray(item));
-}
-
-/**
- * Deep merge two objects.
- * @param target
- * @param ...sources
- */
-export function mergeDeep(target, ...sources) {
-    if (!sources.length) return target;
-    const source = sources.shift();
-
-    if (isObject(target) && isObject(source)) {
-        for (const key in source) {
-            if (isObject(source[key])) {
-                if (!target[key]) Object.assign(target, { [key]: {} });
-                mergeDeep(target[key], source[key]);
-            } else {
-                Object.assign(target, { [key]: source[key] });
-            }
-        }
-    }
-
-    return mergeDeep(target, ...sources);
-}
-
 
 export interface ThroughputStats {
     measures: number;
