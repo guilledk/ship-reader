@@ -92,7 +92,7 @@ export class StateHistoryReader {
             console.log(`[${(new Date()).toISOString().slice(0, -1)}][READER][${level.toUpperCase()}]`, message, ...optionalParams);
     }
 
-    start() {
+    async start() {
         if (this.connecting)
             throw new Error('Reader already connecting');
 
@@ -104,23 +104,29 @@ export class StateHistoryReader {
             perMessageDeflate: false,
             maxPayload: this.options.maxPayloadMb * 1024 * 1024,
         });
-        this.ws.on('open', () => {
-            this.connecting = false;
-            if (this.onConnected)
-                this.onConnected();
-        });
-        this.ws.on('message', (msg: RawData) => {
-            this.handleShipMessage(msg as Buffer);
-        });
-        this.ws.on('close', () => {
-            this.connecting = false;
-            this.shipAbiReady = false;
-            if (this.onDisconnect)
-                this.onDisconnect();
-        });
-        this.ws.on('error', (err) => {
-            this.connecting = false;
-            this.shipAbiReady = false;
+
+        await new Promise<void>((resolve, reject) => {
+            this.ws.on('open', () => {
+                this.connecting = false;
+                if (this.onConnected)
+                    this.onConnected();
+
+                resolve()
+            });
+            this.ws.on('message', (msg: RawData) => {
+                this.handleShipMessage(msg as Buffer);
+            });
+            this.ws.on('close', () => {
+                this.connecting = false;
+                this.shipAbiReady = false;
+                if (this.onDisconnect)
+                    this.onDisconnect();
+                reject()
+            });
+            this.ws.on('error', (err) => {
+                this.connecting = false;
+                this.shipAbiReady = false;
+            });
         });
     }
 
@@ -132,17 +138,20 @@ export class StateHistoryReader {
         this.shipAbiReady = false;
     }
 
-    restart(ms: number = 3000, forceBlock?: number) {
+    async restart(ms: number = 3000, forceBlock?: number) {
         this.log('info', 'Restarting...');
         this.connecting = false;
         this.ws.close()
         this.shipAbiReady = false;
         const restartBlock = forceBlock ? forceBlock : this.lastEmittedBlock + 1;
-        setTimeout(() => {
-            this.reconnectCount++;
-            this.startBlock = restartBlock;
-            this.start();
-        }, ms);
+        await new Promise<void>((resolve, reject) => {
+            setTimeout(async () => {
+                this.reconnectCount++;
+                this.startBlock = restartBlock;
+                await this.start();
+                resolve();
+            }, ms);
+        });
     }
 
     private send(param: (string | any)[]) {

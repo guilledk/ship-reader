@@ -105,7 +105,6 @@ export const StateHistoryReaderOptionsSchema = z.object({
     shipAPI: z.string(),
     chainAPI: z.string(),
     irreversibleOnly: z.boolean().optional().default(false),
-    blockHistorySize: z.number().optional(),
     startBlock: z.number().optional().default(-1),
     stopBlock: z.number().optional().default(-1),
     logLevel: z.string().optional().default('warning'),
