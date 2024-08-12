@@ -4,13 +4,13 @@ import {readFileSync} from "node:fs";
 import {expect} from 'chai';
 import * as console from "console";
 import {Block, StateHistoryReaderOptionsSchema} from "../types.js";
+import * as process from "node:process";
 
 const options = StateHistoryReaderOptionsSchema.parse({
     shipAPI: 'ws://127.0.0.1:29999',
     chainAPI: 'http://127.0.0.1:8888',
-    blockHistorySize: 1000,
-    startBlock: 180698861,
-    stopBlock:  180698881,
+    startBlock: 180698860,
+    stopBlock:  180700000,
     actionWhitelist: {
         'eosio.token': ['transfer'],
         'eosio.evm': ['raw', 'withdraw']
@@ -46,7 +46,7 @@ const statsTask = setInterval(() => {
     }
 }, 1000);
 
-reader.onBlock = (block: Block) => {
+const onBlock = async (block: Block) => {
     const currentBlock = block.status.this_block.block_num;
 
     if (firstBlock < 0) {
@@ -58,23 +58,29 @@ reader.onBlock = (block: Block) => {
     lastPushed = block.status.this_block.block_num;
     lastPushedTS = block.header.timestamp;
     totalRead++;
-    reader.ack(1);
+    reader.ack();
+};
 
-    if (currentBlock == options.stopBlock) {
-        const elapsedMs = performance.now() - firstBlockTs;
-        const elapsedS = elapsedMs / 1000;
-        console.log(`elapsed sec: ${elapsedS}`);
-        console.log(`avg speed: ${(totalRead / elapsedS).toFixed(2)}`);
+reader.onBlock = onBlock;
 
-        if (options.startBlock > 0)
-            expect(firstBlock, 'First block received mismatch!').to.be.equal(options.startBlock);
+reader.onStop = (lastBlock: Block) => {
+    const elapsedMs = performance.now() - firstBlockTs;
+    const elapsedS = elapsedMs / 1000;
+    console.log(`elapsed sec: ${elapsedS}`);
+    console.log(`avg speed: ${(totalRead / elapsedS).toFixed(2)}`);
 
-        if (options.stopBlock > 0)
-            expect(lastPushed, 'Last block received mismatch!').to.be.equal(options.stopBlock);
+    if (options.startBlock > 0)
+        expect(firstBlock, 'First block received mismatch!').to.be.equal(options.startBlock);
 
-        clearInterval(statsTask);
-        process.exit(0);
-    }
+    if (options.stopBlock > 0)
+        expect(lastPushed, 'Last block received mismatch!').to.be.equal(options.stopBlock);
+
+    expect(lastPushed, 'Last block on stop event doesnt match last received!').to.be.equal(lastBlock.status.this_block.block_num);
+
+    reader.stop();
+
+    clearInterval(statsTask);
+    process.exit(0);
 };
 
 await reader.start();

@@ -3,43 +3,77 @@ import fetch from "node-fetch";
 import * as console from "console";
 
 import {ActionSchema, Block, BlockSchema, DeltaSchema, StateHistoryReaderOptions} from "./types.js";
-import {addOnBlockToABI, logLevelToInt, ThroughputMeasurer} from "./utils.js";
+import {addOnBlockToABI, ThroughputMeasurer} from "./utils.js";
 
-import {ABI, ABIDecoder, APIClient, Serializer} from "@wharfkit/antelope";
+import {ABI, ABIDecoder, APIClient, Name, Serializer} from "@wharfkit/antelope";
+import {cargo, QueueObject} from "async";
+
+import {createLogger, format, Logger, transports} from 'winston';
+import * as process from "node:process";
+
 
 export class StateHistoryReader {
 
     readonly options: StateHistoryReaderOptions;
 
     ws: WebSocket;
-    reconnectCount = 0;
-    private connecting = false;
+    reconnectCount: number = 0;
+
+    startBlock: number;
+    stopBlock: number;
+
+    private stopped: boolean = true;  // flag to indicate reader can be started
+    private connecting: boolean = false;  // flag to block more than one .start at a time
+    private restarting: boolean = false;  // flag to block more than one .restart at a time
+
     private shipAbi?: ABI;
     private shipAbiReady = false;
 
     private contracts: Map<string, ABI> = new Map();
+    private readonly api: APIClient;
 
-    startBlock: number;
-    stopBlock: number;
-    lastEmittedBlock: number;
+    private inputQueue: QueueObject<any>;
+    private nextSequence: number;  // next block we send should have this sequence number
 
     perfMetrics: ThroughputMeasurer;
     readonly speedMeasureWindowSize: number;
     readonly speedMeasureDeltaMs: number;
 
-    private blocksSinceLastMeasure: number = 0;
-    private _perfMetricTask;
+    readonly logger: Logger;
 
-    api: APIClient;
+    private blocksSinceLastMeasure: number = 0;
+    private readonly _perfMetricTask: NodeJS.Timeout;
 
     onConnected: () => void = null;
     onDisconnect: () => void = null;
-    onError: (err) => void = null;
+    onError: (err: Error) => void = null;
 
-    onBlock: (block: Block) => void = null;
+    onBlock: (block: Block) => Promise<void> = null;
+    onStop: (lastBlock: Block) => void = null;
 
-    constructor(options: StateHistoryReaderOptions) {
+    constructor(options: StateHistoryReaderOptions, logger?: Logger) {
         this.options = options;
+
+        if (typeof logger === 'undefined') {
+            const loggingOptions = {
+                exitOnError: false,
+                level: this.options.logLevel,
+                format: format.combine(
+                    format.metadata(),
+                    format.colorize(),
+                    format.timestamp(),
+                    format.printf((info: any) => {
+                        return `${info.timestamp} [PID:${process.pid}] [${info.level}] : ${info.message} ${Object.keys(info.metadata).length > 0 ? JSON.stringify(info.metadata) : ''}`;
+                    })
+                )
+            }
+            logger = createLogger(loggingOptions);
+            logger.add(new transports.Console({
+                level: this.options.logLevel
+            }));
+        }
+
+        this.logger = logger;
 
         this.api = new APIClient({
             url: options.chainAPI,
@@ -47,7 +81,8 @@ export class StateHistoryReader {
         });
 
         this.startBlock = options.startBlock ?? -1;
-        this.lastEmittedBlock = this.startBlock - 1;
+        this.stopBlock = options.stopBlock;
+        this.nextSequence = 1;
 
         this.speedMeasureDeltaMs = 1000;
         this.speedMeasureWindowSize = 10 * 1000;
@@ -63,6 +98,33 @@ export class StateHistoryReader {
             this.perfMetrics.measure(this.blocksSinceLastMeasure);
             this.blocksSinceLastMeasure = 0;
         }, this.speedMeasureDeltaMs);
+
+        this.inputQueue = cargo(async (tasks) => {
+            try {
+                await this.processInputQueue(tasks);
+            } catch (e) {
+                this.logger.error(`Error on input queue worker: ${e}`);
+                if (this.onError)
+                    this.onError(e);
+                else
+                    process.exit(3);
+            }
+        }, this.options.maxMsgsInFlight);
+    }
+
+
+    private async processInputQueue(tasks: any[]) {
+        for (const task of tasks) {
+            await this.decodeShipData(task);
+        }
+        if (this.inputQueue.length() > this.options.maxMsgsInFlight) {
+            this.inputQueue.pause();
+            this.logger.info('Reader paused!');
+        }
+    }
+
+    private resumeReading() {
+        this.inputQueue.resume();
     }
 
     isActionRelevant(account: string, name: string): boolean {
@@ -85,22 +147,20 @@ export class StateHistoryReader {
         );
     }
 
-    log(level: string, message?: any, ...optionalParams: any[]): void {
-        if (logLevelToInt(this.options.logLevel) >= logLevelToInt(level))
-            console.log(`[${(new Date()).toISOString().slice(0, -1)}][READER][${level.toUpperCase()}]`, message, ...optionalParams);
-    }
-
     async start() {
         if (this.connecting)
             throw new Error('Reader already connecting');
 
-        this.log('info', 'Node range check done!');
-        this.log('info', `Connecting to ${this.options.shipAPI}...`);
+        if (!this.stopped)
+            throw new Error('Reader is not stopped, can\'t start!')
+
+        this.logger.info('Node range check done!');
+        this.logger.info(`Connecting to ${this.options.shipAPI}...`);
         this.connecting = true;
 
         this.ws = new WebSocket(this.options.shipAPI, {
             perMessageDeflate: false,
-            maxPayload: this.options.maxPayloadMb * 1024 * 1024,
+            maxPayload: this.options.maxPayloadMb * 1024 * 1024
         });
 
         await new Promise<void>((resolve, reject) => {
@@ -121,32 +181,39 @@ export class StateHistoryReader {
                     this.onDisconnect();
                 reject()
             });
-            this.ws.on('error', (err) => {
+            this.ws.on('error', (_: Error) => {
                 this.connecting = false;
                 this.shipAbiReady = false;
             });
         });
+        this.stopped = false;
     }
 
    stop() {
-        this.log('info', 'Stopping...');
+        this.logger.info('Stopping...');
         clearInterval(this._perfMetricTask);
         this.connecting = false;
         this.ws.close()
         this.shipAbiReady = false;
+        this.stopped = true;
     }
 
-    async restart(ms: number = 3000, forceBlock?: number) {
-        this.log('info', 'Restarting...');
+    async restart(ms: number = 3000, blockNum: number) {
+        if (this.restarting)
+            throw new Error('Reader already restarting!');
+
+        this.logger.info('Restarting...');
+        this.restarting = true;
         this.connecting = false;
         this.ws.close()
         this.shipAbiReady = false;
-        const restartBlock = forceBlock ? forceBlock : this.lastEmittedBlock + 1;
-        await new Promise<void>((resolve, reject) => {
+        this.stopped = true;
+        await new Promise<void>(resolve => {
             setTimeout(async () => {
                 this.reconnectCount++;
-                this.startBlock = restartBlock;
+                this.startBlock = blockNum;
                 await this.start();
+                this.restarting = false;
                 resolve();
             }, ms);
         });
@@ -165,6 +232,14 @@ export class StateHistoryReader {
     }
 
     private handleShipMessage(msg: Buffer) {
+        if (this.restarting) {
+            this.logger.debug('dropping msg due to restart...');
+            return;
+        }
+        if (this.stopped) {
+            this.logger.debug('dropping msg due to stop...');
+            return;
+        }
         if (!this.shipAbiReady) {
             this.loadShipAbi(msg);
             return;
@@ -173,16 +248,20 @@ export class StateHistoryReader {
         switch (result[0]) {
             case 'get_blocks_result_v0': {
                 try {
-                    this.decodeShipData(result[1]);
+                    this.inputQueue.push(result[1], null);
                 } catch (e) {
-                    this.log('error', '[decodeShipData]', e.message);
-                    this.log('error', e);
+                    this.logger.error('[decodeShipData]', e.message);
+                    this.logger.error(e);
+                    if (this.onError)
+                        this.onError(e);
+                    else
+                        process.exit(3);
                 }
                 break;
             }
             case 'get_status_result_v0': {
                 const data = Serializer.objectify(result[1]) as any;
-                this.log('info', `Head block: ${data.head.block_num}`);
+                this.logger.info(`Head block: ${data.head.block_num}`);
                 const beginShipState = data.chain_state_begin_block;
                 const endShipState = data.chain_state_end_block;
                 if (this.startBlock < 0) {
@@ -201,7 +280,6 @@ export class StateHistoryReader {
                 if (this.startBlock <= beginShipState)
                     throw new Error(`Start block ${this.startBlock} not in chain_state, begin state: ${beginShipState} (must be +1 to startBlock)`);
 
-                this.lastEmittedBlock = this.startBlock - 1;
                 this.requestBlocks({
                     from: this.startBlock,
                     to: this.stopBlock
@@ -212,19 +290,21 @@ export class StateHistoryReader {
     }
 
     private loadShipAbi(data: Buffer) {
-        this.log('info', `loading ship abi of size: ${data.length}`)
+        this.logger.info(`loading ship abi of size: ${data.length}`)
         const abi = JSON.parse(data.toString());
         this.shipAbi = ABI.from(abi);
         this.shipAbiReady = true;
         this.send(['get_status_request_v0', {}]);
-        this.ackBlockRange(1);
+        this.ack();
     }
 
     private requestBlocks(param: { from: number; to: number }) {
-        this.log('info', `Requesting blocks from ${param.from} to ${param.to}`);
+        const from = param.from > 0 ? param.from : - 1;
+        const to = param.to > 0 ? param.to + 1 : 0xffffffff;
+        this.logger.info(`Requesting blocks from ${from} to ${to - 1}`);
         this.send(['get_blocks_request_v0', {
-            start_block_num: param.from > 0 ? param.from : -1,
-            end_block_num: param.to > 0 ? param.to + 1 : 0xffffffff,
+            start_block_num: from,
+            end_block_num: to,
             max_messages_in_flight: this.options.maxMsgsInFlight,
             have_positions: [],
             irreversible_only: this.options.irreversibleOnly,
@@ -234,7 +314,7 @@ export class StateHistoryReader {
         }]);
     }
 
-    private decodeShipData(resultElement: any) {
+    private async decodeShipData(resultElement: any) {
         const blockInfo = Serializer.objectify({
             head: resultElement.head,
             last_irreversible: resultElement.last_irreversible,
@@ -242,15 +322,20 @@ export class StateHistoryReader {
             prev_block: resultElement.prev_block
         });
 
-        const prevBlockNum = blockInfo.prev_block.block_num;
-        const prevBlockId = blockInfo.prev_block.block_id;
-
         const blockNum = blockInfo.this_block.block_num;
-        const blockId = blockInfo.this_block.block_id;
+        // const blockId = blockInfo.this_block.block_id;
 
-        this.log('debug', '[decodeShipData]:');
-        this.log('debug', `prev: #${prevBlockNum} - ${prevBlockId}`);
-        this.log('debug', `this: #${blockNum} - ${blockId}`);
+        // const prevBlockNum = blockInfo.prev_block.block_num;
+        // const prevBlockId = blockInfo.prev_block.block_id;
+
+        // this.logger.debug('[decodeShipData]:');
+        // this.logger.debug(`prev: #${prevBlockNum} - ${prevBlockId}`);
+        // this.logger.debug(`this: #${blockNum} - ${blockId}`);
+
+        if (blockNum > this.stopBlock) {
+            this.logger.info(`dropping #${blockNum}, reached stop block...`);
+            return;
+        }
 
         let blockHeader = null;
         const decodedDeltas = [];
@@ -305,20 +390,18 @@ export class StateHistoryReader {
                         }).filter(r => r !== null);
                         abiRows.forEach((abiRow) => {
                             if (this.contracts.has(abiRow.name)) {
-                                this.log('info', abiRow.name, `block_num: ${blockNum}`, abiRow.creation_date, `abi hex len: ${abiRow.abi.length}`);
+                                this.logger.info(`new abi for ${abiRow.name} block_num: ${blockNum} ${abiRow.creation_date} abi hex len: ${abiRow.abi.length}`);
                                 if (abiRow.abi.length == 0)
                                     return;
-                                console.time(`abiDecoding-${abiRow.name}-${blockNum}`);
                                 const abiBin = new Uint8Array(Buffer.from(abiRow.abi, 'hex'));
                                 const abi = ABI.fromABI(new ABIDecoder(abiBin));
-                                console.timeEnd(`abiDecoding-${abiRow.name}-${blockNum}`);
                                 this.addContract(abiRow.name, abi);
                             }
                         });
                     }
 
                     if (deltaArray[1].name === 'contract_row') {
-                        deltaArray[1].rows.forEach((row: any, index: number) => {
+                        deltaArray[1].rows.forEach((row: any) => {
                             const deltaRow = Serializer.decode({
                                 data: row.data.array,
                                 type: 'contract_row',
@@ -327,7 +410,10 @@ export class StateHistoryReader {
                             const deltaObj = Serializer.objectify(deltaRow);
                             if (this.isDeltaRelevant(deltaObj.code, deltaObj.table)) {
                                 const abi = this.contracts.get(deltaObj.code);
-                                const type = abi.tables.find(value => value.name === deltaObj.table)?.type;
+                                if (typeof abi === 'undefined') {
+                                    throw new Error(`Cant decode delta for ${JSON.stringify(deltaObj, null, 4)}`);
+                                }
+                                const type = abi.tables.find(value => (value.name as Name).equals(deltaObj.table))?.type;
                                 const dsValue = Serializer.decode({
                                     data: deltaObj.value,
                                     type, abi
@@ -363,7 +449,7 @@ export class StateHistoryReader {
                     for (const at of rt.action_traces) {
                         const actionTrace = at[1];
                         if (actionTrace.receipt === null) {
-                            this.log('warning', `action trace with receipt null! maybe hard_fail'ed deferred tx? block: ${blockNum}`);
+                            this.logger.warning(`action trace with receipt null! maybe hard_fail'ed deferred tx? block: ${blockNum}`);
                             continue;
                         }
                         if (this.isActionRelevant(actionTrace.act.account, actionTrace.act.name))  {
@@ -372,8 +458,7 @@ export class StateHistoryReader {
                                 abiActionNames.push(obj.name.toString());
                             });
                             if (!abiActionNames.includes(actionTrace.act.name)) {
-                                this.log(
-                                    'warning',
+                                this.logger.warning(
                                     `action ${actionTrace.act.name} not found in ${actionTrace.act.account}'s abi, ignoring tx ${rt.id}...`);
                                 continue;
                             }
@@ -408,17 +493,27 @@ export class StateHistoryReader {
             }
         }
 
+        const block = BlockSchema.parse({
+            sequence: this.nextSequence++,
+            status: blockInfo,
+            header: blockHeader,
+            deltas: decodedDeltas,
+            actions: decodedActions
+        });
         if (this.onBlock) {
-            this.onBlock(BlockSchema.parse({
-                status: blockInfo,
-                header: blockHeader,
-                deltas: decodedDeltas,
-                actions: decodedActions
-            }));
+            await this.onBlock(block);
         }
 
         this.blocksSinceLastMeasure++;
-        this.lastEmittedBlock = blockNum;
+
+        if (blockNum == this.stopBlock) {
+            if (this.onStop)
+                this.onStop(block);
+            return;
+        }
+
+        if (this.inputQueue.length() == 0)
+            this.resumeReading();
     }
 
     addContract(account: string, abi: ABI) {
@@ -437,10 +532,7 @@ export class StateHistoryReader {
         }
     }
 
-    ack(amount?: number) {
-        if (typeof amount === undefined)
-            amount = 1;
-
-        this.ackBlockRange(amount);
+    ack() {
+        this.ackBlockRange(1);
     }
 }

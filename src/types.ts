@@ -93,6 +93,7 @@ export const DeltaSchema = z.object({
 export type Delta = z.infer<typeof DeltaSchema>;
 
 export const BlockSchema = z.object({
+    sequence: z.number(),
     status: SyncStatusSchema,
     header: BlockHeaderSchema,
     deltas: z.array(DeltaSchema),
@@ -109,7 +110,7 @@ export const StateHistoryReaderOptionsSchema = z.object({
     stopBlock: z.number().optional().default(-1),
     logLevel: z.string().optional().default('warning'),
     maxPayloadMb: z.number().optional().default(256),
-    maxMsgsInFlight: z.number().optional().default(1000),
+    maxMsgsInFlight: z.number().optional().default(32),
     fetchBlock: z.boolean().optional().default(true),
     fetchTraces: z.boolean().optional().default(true),
     fetchDeltas: z.boolean().optional().default(true),

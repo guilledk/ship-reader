@@ -19,15 +19,6 @@ export function addOnBlockToABI(abi: ABI) {
     abi.actions = [onblockAbiAction, ...abi.actions];
 }
 
-export function logLevelToInt(level: string) {
-    const levels = [
-        'error', 'warning', 'info', 'debug'
-    ];
-    if (!levels.includes(level))
-        throw new Error(`Unimplemented level ${level}`);
-    return levels.indexOf(level);
-}
-
 export interface ThroughputStats {
     measures: number;
     elapsedMs?: number;

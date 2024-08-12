@@ -1,7 +1,7 @@
 {
   "name": "@guilledk/state-history-reader",
   "repository": "guilledk/ship-reader",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "",
   "main": "./lib/esm/index.js",
   "types": "./lib/esm/index.d.ts",
@@ -20,19 +20,21 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@types/async": "^3.2.24",
     "@wharfkit/antelope": "^1.0.10",
     "bufferutil": "^4.0.8",
     "node-fetch": "^3.3.0",
+    "winston": "^3.14.1",
     "ws": "^8.13.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "testcontainers": "^10.11.0",
     "@types/chai": "^4.3.11",
     "@types/node": "^18.11.13",
     "@types/ws": "^8.5.4",
     "chai": "^5.0.0",
     "nodemon": "^2.0.22",
+    "testcontainers": "^10.11.0",
     "tsx": "^3.12.7",
     "typescript": "^5.0.4"
   }
