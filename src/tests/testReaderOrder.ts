@@ -10,7 +10,7 @@ const options = StateHistoryReaderOptionsSchema.parse({
     chainAPI: 'http://127.0.0.1:8888',
     blockHistorySize: 1000,
     startBlock: 180698861,
-    endBlock: -1,
+    stopBlock:  180698881,
     actionWhitelist: {
         'eosio.token': ['transfer'],
         'eosio.evm': ['raw', 'withdraw']
@@ -59,21 +59,22 @@ reader.onBlock = (block: Block) => {
     lastPushedTS = block.header.timestamp;
     totalRead++;
     reader.ack(1);
+
+    if (currentBlock == options.stopBlock) {
+        const elapsedMs = performance.now() - firstBlockTs;
+        const elapsedS = elapsedMs / 1000;
+        console.log(`elapsed sec: ${elapsedS}`);
+        console.log(`avg speed: ${(totalRead / elapsedS).toFixed(2)}`);
+
+        if (options.startBlock > 0)
+            expect(firstBlock, 'First block received mismatch!').to.be.equal(options.startBlock);
+
+        if (options.stopBlock > 0)
+            expect(lastPushed, 'Last block received mismatch!').to.be.equal(options.stopBlock);
+
+        clearInterval(statsTask);
+        process.exit(0);
+    }
 };
 
-reader.events.on('stop', () => {
-    const elapsedMs = performance.now() - firstBlockTs;
-    const elapsedS = elapsedMs / 1000;
-    console.log(`elapsed sec: ${elapsedS}`);
-    console.log(`avg speed: ${(totalRead / elapsedS).toFixed(2)}`);
-
-    if (options.startBlock > 0)
-        expect(firstBlock, 'First block received mismatch!').to.be.equal(options.startBlock);
-
-    if (options.stopBlock > 0)
-        expect(lastPushed, 'Last block received mismatch!').to.be.equal(options.stopBlock);
-
-    clearInterval(statsTask);
-});
-
-reader.start();
+await reader.start();

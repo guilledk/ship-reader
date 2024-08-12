@@ -1,7 +1,7 @@
 {
   "name": "@guilledk/state-history-reader",
   "repository": "guilledk/ship-reader",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "",
   "main": "./lib/esm/index.js",
   "types": "./lib/esm/index.d.ts",

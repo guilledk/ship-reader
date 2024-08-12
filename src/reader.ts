@@ -1,5 +1,4 @@
 import WebSocket, {RawData} from "ws";
-import {EventEmitter} from "events";
 import fetch from "node-fetch";
 import * as console from "console";
 
@@ -17,7 +16,6 @@ export class StateHistoryReader {
     private connecting = false;
     private shipAbi?: ABI;
     private shipAbiReady = false;
-    readonly events = new EventEmitter();
 
     private contracts: Map<string, ABI> = new Map();
 
