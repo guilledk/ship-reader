@@ -63,7 +63,7 @@ export class StateHistoryReader {
                     format.colorize(),
                     format.timestamp(),
                     format.printf((info: any) => {
-                        return `${info.timestamp} [PID:${process.pid}] [${info.level}] : ${info.message} ${Object.keys(info.metadata).length > 0 ? JSON.stringify(info.metadata) : ''}`;
+                        return `${info.timestamp} [PID:${process.pid}] [${info.level}] [READER] : ${info.message} ${Object.keys(info.metadata).length > 0 ? JSON.stringify(info.metadata) : ''}`;
                     })
                 )
             }
@@ -534,5 +534,22 @@ export class StateHistoryReader {
 
     ack() {
         this.ackBlockRange(1);
+    }
+
+    get diagnostics() {
+        return {
+            start_block: this.startBlock,
+            stop_block: this.stopBlock,
+            reconnect_count: this.reconnectCount,
+            stopped: this.stopped,
+            connecting: this.connecting,
+            restarting: this.restarting,
+            ship_abi_ready: this.shipAbiReady,
+            input_queue: {
+                pending: this.inputQueue.length(),
+                paused: this.inputQueue.paused
+            },
+
+        };
     }
 }
