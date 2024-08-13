@@ -154,7 +154,6 @@ export class StateHistoryReader {
         if (!this.stopped)
             throw new Error('Reader is not stopped, can\'t start!')
 
-        this.logger.info('Node range check done!');
         this.logger.info(`Connecting to ${this.options.shipAPI}...`);
         this.connecting = true;
 
@@ -166,10 +165,11 @@ export class StateHistoryReader {
         await new Promise<void>((resolve, reject) => {
             this.ws.on('open', () => {
                 this.connecting = false;
+                this.stopped = false;
                 if (this.onConnected)
                     this.onConnected();
 
-                resolve()
+                resolve();
             });
             this.ws.on('message', (msg: RawData) => {
                 this.handleShipMessage(msg as Buffer);
@@ -179,14 +179,14 @@ export class StateHistoryReader {
                 this.shipAbiReady = false;
                 if (this.onDisconnect)
                     this.onDisconnect();
-                reject()
+                reject();
             });
             this.ws.on('error', (_: Error) => {
                 this.connecting = false;
                 this.shipAbiReady = false;
+                reject();
             });
         });
-        this.stopped = false;
     }
 
    stop() {
