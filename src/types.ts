@@ -58,7 +58,7 @@ export type AuthSequence = z.infer<typeof AuthSequenceSchema>;
 export const ReceiptSchema = z.object({
     receiver: z.string(),
     act_digest: z.string(),
-    global_sequence: z.string(),
+    global_sequence: z.union([z.string(), z.number()]),
     recv_sequence: z.number(),
     auth_sequence: z.array(AuthSequenceSchema),
     code_sequence: z.number(),
@@ -68,7 +68,7 @@ export const ReceiptSchema = z.object({
 export type Receipt = z.infer<typeof ReceiptSchema>;
 
 export const ActionSchema = z.object({
-    global_sequence: z.string(),
+    global_sequence: z.union([z.string(), z.number()]),
     action_ordinal: z.number(),
     creator_action_ordinal: z.number(),
     trx_id: z.string(),
