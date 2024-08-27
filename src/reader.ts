@@ -271,7 +271,7 @@ export class StateHistoryReader {
                         throw new Error(`irreversibleOnly true but startBlock > ship LIB`);
                 }
                 // only care about end state if end block < 0 or end block is max posible
-                if (this.options.stopBlock != 0xffffffff - 1)
+                if (this.options.stopBlock < 0xffffffff - 1)
                     if (this.stopBlock < 0)
                         this.stopBlock = 0xffffffff - 1;
                     else if (this.stopBlock > endShipState)
@@ -449,7 +449,7 @@ export class StateHistoryReader {
                     for (const at of rt.action_traces) {
                         const actionTrace = at[1];
                         if (actionTrace.receipt === null) {
-                            this.logger.warning(`action trace with receipt null! maybe hard_fail'ed deferred tx? block: ${blockNum}`);
+                            this.logger.warn(`action trace with receipt null! maybe hard_fail'ed deferred tx? block: ${blockNum}`);
                             continue;
                         }
                         if (this.isActionRelevant(actionTrace.act.account, actionTrace.act.name))  {
@@ -458,7 +458,7 @@ export class StateHistoryReader {
                                 abiActionNames.push(obj.name.toString());
                             });
                             if (!abiActionNames.includes(actionTrace.act.name)) {
-                                this.logger.warning(
+                                this.logger.warn(
                                     `action ${actionTrace.act.name} not found in ${actionTrace.act.account}'s abi, ignoring tx ${rt.id}...`);
                                 continue;
                             }
