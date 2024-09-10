@@ -271,7 +271,7 @@ export class StateHistoryReader {
                         throw new Error(`irreversibleOnly true but startBlock > ship LIB`);
                 }
                 // only care about end state if end block < 0 or end block is max posible
-                if (this.options.stopBlock < 0xffffffff - 1)
+                if (this.options.stopBlock > 0 && this.options.stopBlock < 0xffffffff - 1)
                     if (this.stopBlock < 0)
                         this.stopBlock = 0xffffffff - 1;
                     else if (this.stopBlock > endShipState)
