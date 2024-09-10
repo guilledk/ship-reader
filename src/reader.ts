@@ -272,10 +272,11 @@ export class StateHistoryReader {
                 }
                 // only care about end state if end block < 0 or end block is max posible
                 if (this.options.stopBlock > 0 && this.options.stopBlock < 0xffffffff - 1)
-                    if (this.stopBlock < 0)
-                        this.stopBlock = 0xffffffff - 1;
-                    else if (this.stopBlock > endShipState)
+                    if (this.stopBlock > endShipState)
                         throw new Error(`End block ${this.stopBlock} not in chain_state, end state: ${endShipState}`);
+
+                if (this.stopBlock < 0)
+                    this.stopBlock = 0xffffffff - 1;
 
                 if (this.startBlock <= beginShipState)
                     throw new Error(`Start block ${this.startBlock} not in chain_state, begin state: ${beginShipState} (must be +1 to startBlock)`);
